@@ -83,7 +83,7 @@ describe("run", () => {
     const project = await mkdtemp(join(tmpdir(), "warden-cli-"))
     const store = await SessionStore.create(project, "s1")
     await store.saveState({ sessionId: "s1", tasks: [{ id: "t1", objective: "resume", agent: "builder", state: "running" }], updatedAt: 1 })
-    await expect(cli.run(["resume", "s1"], { start: async () => ({ state: "completed" }), resume: async () => ({ state: "completed", result: "continued" }) }, { project })).resolves.toBe("completed: continued")
+    await expect(cli.run(["resume", "s1"], { start: async () => ({ state: "completed" }), resume: async () => ({ state: "completed", result: "continued" }) }, { project })).resolves.toContain("completed: continued")
   })
 
   it("recalls project memory into the agent prompt and audits the recall", async () => {
@@ -96,7 +96,7 @@ describe("run", () => {
     ]))
     pi.prompts.length = 0
 
-    await expect(cli.run(["run", "fix", "the", "bug"], undefined, { project, home })).resolves.toBe("completed: done")
+    await expect(cli.run(["run", "fix", "the", "bug"], undefined, { project, home })).resolves.toContain("completed: done")
     expect(pi.prompts[0]).toContain("Never delete production data")
 
     const [session] = await SessionStore.list(project)
@@ -114,7 +114,7 @@ describe("run", () => {
     await writeFile(join(project, ".warden/skills/nestjs/SKILL.md"), "Use dependency injection.")
     pi.prompts.length = 0
 
-    await expect(cli.run(["run", "add", "nestjs", "authentication"], undefined, { project, home })).resolves.toBe("completed: done")
+    await expect(cli.run(["run", "add", "nestjs", "authentication"], undefined, { project, home })).resolves.toContain("completed: done")
     expect(pi.prompts[0]).toContain("nestjs (+3400 tokens)")
     expect(pi.prompts[0]).toContain("Use dependency injection.")
 
@@ -135,7 +135,7 @@ describe("run", () => {
     }))
     pi.sessions.length = 0
 
-    await expect(cli.run(["run", "fix", "the", "bug"], undefined, { project, home })).resolves.toBe("completed: done")
+    await expect(cli.run(["run", "fix", "the", "bug"], undefined, { project, home })).resolves.toContain("completed: done")
 
     const options = pi.sessions[0]
     expect(options.tools).toContain("mcp__demo__echo")

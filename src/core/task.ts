@@ -17,7 +17,7 @@ export interface Task {
 }
 
 const transitions: Record<TaskState, readonly TaskState[]> = {
-  pending: ["ready"], ready: ["running"], running: ["completed", "failed", "blocked", "cancelled"],
+  pending: ["ready", "blocked"], ready: ["running"], running: ["completed", "failed", "blocked", "cancelled"],
   completed: [], failed: [], blocked: ["ready", "cancelled"], cancelled: []
 }
 

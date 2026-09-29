@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { routeTask, WardenRuntime } from "../../src/runtime/warden-runtime.js"
+import { planTasks, routeTask, WardenRuntime } from "../../src/runtime/warden-runtime.js"
 import { EventBus } from "../../src/core/events.js"
 import { SessionStore } from "../../src/persistence/session-store.js"
 
@@ -40,16 +40,16 @@ describe("WardenRuntime", () => {
   it("routes configured categories deterministically and supplies validation constraints", async () => {
     const root = await mkdtemp(join(tmpdir(), "warden-"))
     const store = await SessionStore.create(root, "s1")
-    let constraints: string[] = []
-    let model: unknown
-    const runtime = new WardenRuntime(store, new EventBus(), { run: async (context) => { constraints = context.constraints; model = context.model; return { status: "completed", text: "done" } } }, "s1", {
+    const constraints: Record<string, string[]> = {}
+    const models: Record<string, unknown> = {}
+    const runtime = new WardenRuntime(store, new EventBus(), { run: async (context) => { constraints[context.role ?? "none"] = context.constraints; models[context.role ?? "none"] = context.model; return { status: "completed", text: "done" } } }, "s1", {
       models: { fast: { provider: "openai", model: "gpt-5-mini", reasoning: "low", contextLimit: 4000 } },
       categories: { debug: { model: "fast", reasoning: "high", contextLimit: 8000, validation: ["npm test"] }, implementation: { model: "fast" } }
     }, [], async (commands) => [{ command: commands[0], code: 0, output: "" }])
 
     await expect(runtime.start("fix authentication failure")).resolves.toMatchObject({ agent: "builder", category: "debug", validation: "important", validationCommands: ["npm test"] })
-    expect(constraints).toEqual(expect.arrayContaining(["You are the only role allowed to modify source files.", "Important task: review the change and run validation.", "Validation: npm test"]))
-    expect(model).toEqual({ provider: "openai", model: "gpt-5-mini", reasoning: "high", contextLimit: 8000 })
+    expect(constraints.builder).toEqual(expect.arrayContaining(["You are the only role allowed to modify source files.", "Important task: review the change and run validation.", "Validation: npm test"]))
+    expect(models.builder).toEqual({ provider: "openai", model: "gpt-5-mini", reasoning: "high", contextLimit: 8000 })
   })
 
   it("runs configured validation after Builder completion and records its summary", async () => {
@@ -120,5 +120,69 @@ describe("WardenRuntime", () => {
     await expect(runtime.resume()).resolves.toMatchObject({ id: "t1", state: "completed", result: "done" })
     expect(constraints).toContain("This task was interrupted. Inspect the current workspace before continuing; no prior Pi transcript is available.")
     await expect(store.loadState()).resolves.toMatchObject({ tasks: [expect.objectContaining({ id: "t1", state: "completed" })] })
+  })
+
+  it("plans a single step for simple and read-only work", () => {
+    expect(planTasks("rename a variable")).toHaveLength(1)
+    expect(planTasks("research external documentation")).toMatchObject([{ agent: "navigator", validation: "simple" }])
+    expect(planTasks("rename a variable")).toMatchObject([{ agent: "builder", validation: "simple" }])
+  })
+
+  it("plans inspect → build → review for important Builder work", async () => {
+    const root = await mkdtemp(join(tmpdir(), "warden-"))
+    const store = await SessionStore.create(root, "s1")
+    const runtime = new WardenRuntime(store, new EventBus(), { run: async () => ({ status: "completed", text: "done" }) }, "s1")
+
+    await expect(runtime.start("implement authentication feature")).resolves.toMatchObject({ agent: "builder", state: "completed" })
+    const { tasks } = runtime.snapshot()
+    expect(tasks.map((task) => task.agent)).toEqual(["inspector", "builder", "reviewer"])
+    expect(tasks[1].dependencies).toEqual([tasks[0].id])
+    expect(tasks[2].dependencies).toEqual([tasks[1].id])
+    expect(tasks.every((task) => task.state === "completed")).toBe(true)
+    await expect(store.readEvents()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "task.created" }),
+      expect.objectContaining({ type: "task.completed" })
+    ]))
+  })
+
+  it("passes completed dependency results as isolated artifacts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "warden-"))
+    const store = await SessionStore.create(root, "s1")
+    const artifacts: Record<string, unknown[]> = {}
+    const runtime = new WardenRuntime(store, new EventBus(), {
+      run: async (context) => {
+        artifacts[context.role ?? "none"] = context.artifacts
+        return { status: "completed", text: `${context.role} output` }
+      }
+    }, "s1")
+
+    await runtime.start("implement authentication feature")
+    expect(artifacts.inspector).toEqual([])
+    expect(artifacts.builder).toEqual([{ label: expect.stringContaining("inspector"), content: "inspector output" }])
+    expect(artifacts.reviewer).toEqual([{ label: expect.stringContaining("builder"), content: "builder output" }])
+  })
+
+  it("blocks downstream tasks when a dependency fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "warden-"))
+    const store = await SessionStore.create(root, "s1")
+    let calls = 0
+    const runtime = new WardenRuntime(store, new EventBus(), { run: async () => (++calls === 1 ? { status: "failed", text: "inspect exploded" } : { status: "completed", text: "done" }) }, "s1")
+
+    await expect(runtime.start("implement authentication feature")).resolves.toMatchObject({ agent: "inspector", state: "failed", error: "inspect exploded" })
+    const { tasks } = runtime.snapshot()
+    expect(tasks.map((task) => task.state)).toEqual(["failed", "blocked", "blocked"])
+    await expect(store.readEvents()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "task.failed", payload: { task: expect.objectContaining({ state: "blocked" }) } })
+    ]))
+  })
+
+  it("records session.started once per runtime", async () => {
+    const root = await mkdtemp(join(tmpdir(), "warden-"))
+    const store = await SessionStore.create(root, "s1")
+    const runtime = new WardenRuntime(store, new EventBus(), { run: async () => ({ status: "completed", text: "done" }) }, "s1")
+    await runtime.start("rename x")
+    await runtime.start("fix y")
+    const events = await store.readEvents() as Array<{ type: string }>
+    expect(events.filter(({ type }) => type === "session.started")).toHaveLength(1)
   })
 })
