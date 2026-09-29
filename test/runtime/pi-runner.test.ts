@@ -92,6 +92,30 @@ describe("PiRunner", () => {
     expect(JSON.stringify(received)).not.toContain("private summary")
   })
 
+  it("extracts real Pi usage shapes and attaches estimated cost from the price book", async () => {
+    let listener: ((value: unknown) => void) | undefined
+    const received: Array<{ type: string; payload: unknown }> = []
+    const events = new EventBus()
+    events.subscribe((value) => received.push({ type: value.type, payload: value.payload }))
+    const factory: PiSessionFactory = async () => ({
+      prompt: async () => {
+        listener?.({ type: "message_end", message: { role: "assistant", usage: { input: 1_000_000, output: 100_000, cacheRead: 2_000_000, cacheWrite: 500_000, reasoning: 10_000, totalTokens: 2_610_000, cost: { input: 9, output: 9, cacheRead: 0, cacheWrite: 0, total: 18 } } } })
+      },
+      getLastAssistantText: () => "done",
+      subscribe: (value) => { listener = value; return () => { listener = undefined } },
+      dispose: () => {},
+      abort: async () => {}
+    })
+    const runner = new PiRunner(factory, events, "s1", undefined, {
+      priceFor: () => ({ input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 }),
+      estimate: (_provider, _model, usage) => ((usage.input ?? 0) + (usage.output ?? 0) * 5 + (usage.cachedInput ?? 0) * 0.1 + (usage.cachedWrite ?? 0) * 1.25) / 1_000_000
+    })
+
+    await runner.run({ objective: "fix", constraints: [], artifacts: [], model: { provider: "anthropic", model: "claude-haiku-4-5" } })
+
+    expect(received).toContainEqual({ type: "usage.updated", payload: { input: 1_000_000, output: 100_000, cachedInput: 2_000_000, cachedWrite: 500_000, reasoning: 10_000, cost: 18, estimatedCost: 1 + 0.5 + 0.2 + 0.625 } })
+  })
+
   it("selects only tools allowed by autonomy and role", () => {
     expect(selectPiTools("inspector", { autonomy: "full", policy: { allowed: ["safe_write"] } })).toEqual(["read", "grep", "find", "ls"])
     expect(selectPiTools("builder", { autonomy: "ask", policy: { allowed: ["safe_write"] } })).toEqual([])

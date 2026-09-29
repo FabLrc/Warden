@@ -29,6 +29,13 @@ Warden writes its logical session state under `.warden/sessions/`. `state.json`
 is the authoritative checkpoint; `events.jsonl` is an audit log whose final
 truncated line is ignored on recovery.
 
+Runs end with a metrics line (tokens, cost, duration). When the provider does
+not report a billed cost, Warden estimates it from live models.dev prices cached
+in `~/.warden/cache/models-dev.json` for 24h. With OpenRouter models configured
+and `OPENROUTER_API_KEY` set, the run also shows the live plan quota and records
+a `usage.limits` event. `warden doctor` reports the price cache age and quota
+setup.
+
 `warden config` prints the effective, merged configuration without MCP
 environment values. `warden sessions` lists saved sessions. `warden resume
 <session-id>` resumes the first incomplete task from its authoritative

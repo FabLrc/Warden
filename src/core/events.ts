@@ -4,6 +4,7 @@ export interface Usage {
   input?: number
   output?: number
   cachedInput?: number
+  cachedWrite?: number
   reasoning?: number
   cost?: number
   estimatedCost?: number
@@ -22,6 +23,7 @@ export type EventType =
   | "tool.completed"
   | "model.selected"
   | "usage.updated"
+  | "usage.limits"
   | "checkpoint.created"
   | "memory.recalled"
   | "skill.loaded"

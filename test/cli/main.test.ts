@@ -8,7 +8,7 @@ const pi = vi.hoisted(() => ({ prompts: [] as string[], sessions: [] as Array<Re
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   DefaultResourceLoader: class { async reload() {} },
-  ModelRuntime: { create: vi.fn() },
+  ModelRuntime: { create: vi.fn(async () => ({ getModel: (provider: string, model: string) => ({ id: model, provider, contextWindow: 8000 }) })) },
   SessionManager: { inMemory: vi.fn() },
   createAgentSession: vi.fn(async (options: Record<string, unknown>) => {
     pi.sessions.push(options)
@@ -140,5 +140,36 @@ describe("run", () => {
     const options = pi.sessions[0]
     expect(options.tools).toContain("mcp__demo__echo")
     expect((options.customTools as Array<{ name: string }>).map(({ name }) => name)).toEqual(["mcp__demo__echo", "mcp__demo__danger"])
+  })
+
+  it("shows live OpenRouter quota and audits the usage.limits event", async () => {
+    const root = await mkdtemp(join(tmpdir(), "warden-cli-"))
+    const home = join(root, "home")
+    const project = join(root, "project")
+    await mkdir(join(project, ".warden"), { recursive: true })
+    await writeFile(join(project, ".warden", "config.yaml"), JSON.stringify({
+      version: 1,
+      models: { router: { provider: "openrouter", model: "anthropic/claude-haiku-4.5" } },
+      categories: { implementation: { model: "router" } }
+    }))
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key")
+    const fetchImpl = async (url: string | URL | Request) => {
+      const target = String(url)
+      if (target.includes("models.dev")) return { ok: true, status: 200, json: async () => ({}) } as Response
+      if (target.endsWith("/key")) return { ok: true, status: 200, json: async () => ({ data: { usage: 25, limit: 100 } }) } as Response
+      return { ok: true, status: 200, json: async () => ({ total_credits: 120, total_usage: 45.5 }) } as Response
+    }
+
+    try {
+      const output = await cli.run(["run", "fix", "the", "bug"], undefined, { project, home, fetchImpl })
+      expect(output).toContain("quota: openrouter 25% of plan, $74.50 remaining")
+
+      const [session] = await SessionStore.list(project)
+      await expect(SessionStore.open(project, session.state.sessionId).readEvents()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "usage.limits", payload: expect.objectContaining({ provider: "openrouter", planPercentUsed: 25, creditsRemaining: 74.5 }) })
+      ]))
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })

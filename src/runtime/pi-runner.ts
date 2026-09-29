@@ -2,6 +2,7 @@ import { DefaultResourceLoader, ModelRuntime, SessionManager, createAgentSession
 import type { ModelConfig } from "../config/config.js"
 import { canWrite, type AgentRole } from "../core/roles.js"
 import { EventBus, event, type Usage } from "../core/events.js"
+import type { PriceBook } from "../models/pricing.js"
 import { ContextInspector, type ContextSnapshot } from "../observability/context-inspector.js"
 import { classifyTool, decidePolicy, type AutonomyMode, type PermissionPolicy } from "../policy/policy.js"
 import type { MemoryRecord } from "../memory/memory-store.js"
@@ -35,11 +36,12 @@ export type PiSessionFactory = (context: TaskContext) => Promise<PiSession>
 export interface PiPolicyOptions { autonomy?: AutonomyMode; policy?: PermissionPolicy; toolProxy?: ToolProxyOptions; mcp?: Record<string, McpServerDefinition> }
 
 export class PiRunner {
-  constructor(private readonly factory: PiSessionFactory, private readonly events: EventBus, private readonly sessionId: string, private readonly inspector = new ContextInspector()) {}
+  constructor(private readonly factory: PiSessionFactory, private readonly events: EventBus, private readonly sessionId: string, private readonly inspector = new ContextInspector(), private readonly prices?: PriceBook) {}
 
   async run(context: TaskContext, options: { signal?: AbortSignal } = {}): Promise<PiRunResult> {
     const session = await this.factory(context)
-    const unsubscribe = observePiSession(session, this.events, this.sessionId)
+    const estimate = this.prices && context.model ? (usage: Usage) => this.prices!.estimate(context.model!.provider, context.model!.model, usage) : undefined
+    const unsubscribe = observePiSession(session, this.events, this.sessionId, estimate)
     const abort = () => { void session.abort() }
     options.signal?.addEventListener("abort", abort, { once: true })
     try {
@@ -64,7 +66,7 @@ export class PiRunner {
   contextSnapshot(): ContextSnapshot { return this.inspector.snapshot() }
 }
 
-function observePiSession(session: PiSession, events: EventBus, sessionId: string): () => void {
+function observePiSession(session: PiSession, events: EventBus, sessionId: string, estimate?: (usage: Usage) => number | undefined): () => void {
   return session.subscribe((value) => {
     if (!isRecord(value) || typeof value.type !== "string") return
     switch (value.type) {
@@ -88,7 +90,11 @@ function observePiSession(session: PiSession, events: EventBus, sessionId: strin
       case "message_end": {
         const message = isRecord(value.message) ? value.message : undefined
         const usage = message?.role === "assistant" ? toUsage(message.usage) : undefined
-        if (usage) events.publish(event(sessionId, "usage.updated", usage))
+        if (usage) {
+          const estimated = estimate?.(usage)
+          if (estimated !== undefined) usage.estimatedCost = estimated
+          events.publish(event(sessionId, "usage.updated", usage))
+        }
         break
       }
       case "compaction_end":
@@ -103,13 +109,18 @@ function isRecord(value: unknown): value is Record<string, unknown> { return typ
 function toUsage(value: unknown): Usage | undefined {
   if (!isRecord(value)) return undefined
   const usage = {
-    input: numberAt(value, "inputTokens", "input"),
-    output: numberAt(value, "outputTokens", "output"),
-    cachedInput: numberAt(value, "cacheReadTokens", "cachedInput"),
-    reasoning: numberAt(value, "reasoningTokens", "reasoning"),
-    cost: numberAt(value, "cost"),
+    input: numberAt(value, "input", "inputTokens"),
+    output: numberAt(value, "output", "outputTokens"),
+    cachedInput: numberAt(value, "cacheRead", "cacheReadTokens", "cachedInput"),
+    cachedWrite: numberAt(value, "cacheWrite", "cacheWriteTokens"),
+    reasoning: numberAt(value, "reasoning", "reasoningTokens"),
+    cost: numberAt(value, "cost") ?? costTotal(value.cost)
   }
   return Object.values(usage).some((number) => number !== undefined) ? usage : undefined
+}
+
+function costTotal(value: unknown): number | undefined {
+  return isRecord(value) ? numberAt(value, "total") : undefined
 }
 
 function numberAt(value: Record<string, unknown>, ...keys: string[]): number | undefined {
@@ -169,7 +180,7 @@ export function installToolProxy(pi: ExtensionAPI, proxy: ToolProxy, options: To
   })
 }
 
-export function createPiRunner(cwd: string, events: EventBus, sessionId: string, options: PiPolicyOptions = {}): PiRunner {
+export function createPiRunner(cwd: string, events: EventBus, sessionId: string, options: PiPolicyOptions = {}, prices?: PriceBook): PiRunner {
   const inspector = new ContextInspector()
   const proxy = new ToolProxy(inspector)
   return new PiRunner(async (context) => {
@@ -207,5 +218,5 @@ export function createPiRunner(cwd: string, events: EventBus, sessionId: string,
       close()
       throw error
     }
-  }, events, sessionId, inspector)
+  }, events, sessionId, inspector, prices)
 }

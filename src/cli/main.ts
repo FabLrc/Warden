@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { loadConfig, type WardenConfig } from "../config/config.js"
-import { EventBus, type WardenEvent } from "../core/events.js"
+import { EventBus, event, type WardenEvent } from "../core/events.js"
 import type { Task } from "../core/task.js"
 import { doctor } from "../diagnostics/doctor.js"
 import { MemoryStore } from "../memory/memory-store.js"
+import { fetchOpenRouterQuota, formatQuota, loadPriceBook } from "../models/pricing.js"
 import { aggregateSessionMetrics, type SessionMetrics } from "../observability/metrics.js"
 import { SessionStore, type SessionDescriptor } from "../persistence/session-store.js"
 import { createPiRunner } from "../runtime/pi-runner.js"
@@ -17,7 +18,7 @@ interface RuntimeLike {
   start(objective: string): Promise<{ state: string; result?: string; error?: string }>
   resume?(): Promise<{ state: string; result?: string; error?: string }>
 }
-interface RunOptions { project?: string; home?: string }
+interface RunOptions { project?: string; home?: string; fetchImpl?: typeof fetch }
 
 export async function run(argv: string[], runtime?: RuntimeLike, options: RunOptions = {}): Promise<string> {
   const project = options.project ?? process.cwd()
@@ -33,43 +34,61 @@ export async function run(argv: string[], runtime?: RuntimeLike, options: RunOpt
     const store = SessionStore.open(project, sessionId)
     const state = await store.loadState()
     if (state.sessionId !== sessionId) throw new Error(`invalid Warden state: session ID does not match ${sessionId}`)
-    if (!runtime) runtime = await buildRuntime(project, home, sessionId, store, state.tasks)
+    if (!runtime) runtime = await buildRuntime(project, home, sessionId, store, options, state.tasks)
     if (!runtime.resume) throw new Error("runtime does not support resume")
-    return formatResult(await runtime.resume(), store)
+    return formatResult(await runtime.resume(), store, project, home, sessionId, options)
   }
   if (argv[0] !== "run" || argv.length === 1) return usage()
   const request = argv.slice(1).join(" ")
   let store: SessionStore | undefined
+  let sessionId = randomUUID()
   if (!runtime) {
-    const sessionId = randomUUID()
     store = await SessionStore.create(project, sessionId)
-    runtime = await buildRuntime(project, home, sessionId, store)
+    runtime = await buildRuntime(project, home, sessionId, store, options)
   }
   const task = await runtime.start(request)
-  return formatResult(task, store)
+  return formatResult(task, store, project, home, sessionId, options)
 }
 
-async function formatResult(task: { state: string; result?: string; error?: string }, store?: SessionStore): Promise<string> {
+async function formatResult(task: { state: string; result?: string; error?: string }, store: SessionStore | undefined, project: string, home: string, sessionId: string, options: RunOptions): Promise<string> {
   const body = formatTask(task)
   if (!store) return body
   const metrics = aggregateSessionMetrics(await store.readEvents() as WardenEvent[])
-  return `${body}\n${formatMetrics(metrics)}`
+  const lines = [body, formatMetrics(metrics)]
+  const quota = await quotaLine(store, project, home, sessionId, options)
+  if (quota) lines.push(quota)
+  return lines.join("\n")
 }
 
 function formatMetrics(metrics: SessionMetrics): string {
-  const { input, output, cachedInput, reasoning } = metrics.usage
-  const tokens = input + output + cachedInput + reasoning
-  const cost = metrics.providerCost + metrics.estimatedCost
-  return `metrics: ${tokens} tokens (in ${input}, out ${output}, cached ${cachedInput}, reasoning ${reasoning}), $${cost.toFixed(4)}, ${(metrics.durationMs / 1000).toFixed(1)}s`
+  const { input, output, cachedInput, cachedWrite, reasoning } = metrics.usage
+  const tokens = input + output + cachedInput + cachedWrite + reasoning
+  const estimated = metrics.providerCost === 0 && metrics.estimatedCost > 0
+  const cost = metrics.providerCost > 0 ? metrics.providerCost : metrics.estimatedCost
+  return `metrics: ${tokens} tokens (in ${input}, out ${output}, cached ${cachedInput + cachedWrite}, reasoning ${reasoning}), ${estimated ? "~" : ""}$${cost.toFixed(4)}, ${(metrics.durationMs / 1000).toFixed(1)}s`
 }
 
-async function buildRuntime(project: string, home: string, sessionId: string, store: SessionStore, tasks: Task[] = []): Promise<WardenRuntime> {
+async function quotaLine(store: SessionStore, project: string, home: string, sessionId: string, options: RunOptions): Promise<string | undefined> {
+  try {
+    const config = await loadConfig(project, home)
+    const apiKey = process.env.OPENROUTER_API_KEY
+    if (!apiKey || !Object.values(config.models).some(({ provider }) => provider === "openrouter")) return undefined
+    const quota = await fetchOpenRouterQuota({ apiKey, fetchImpl: options.fetchImpl })
+    await store.appendEvent(event(sessionId, "usage.limits", { provider: "openrouter", ...quota }))
+    return formatQuota(quota)
+  } catch {
+    return undefined
+  }
+}
+
+async function buildRuntime(project: string, home: string, sessionId: string, store: SessionStore, options: RunOptions, tasks: Task[] = []): Promise<WardenRuntime> {
   const events = new EventBus()
   const config = await loadConfig(project, home)
   const memory = await MemoryStore.create(project)
   const skills = new SkillRegistry()
   await skills.loadFrom(join(project, ".warden", "skills"))
-  const runner = createPiRunner(project, events, sessionId, config)
+  const prices = await loadPriceBook({ home, fetchImpl: options.fetchImpl })
+  const runner = createPiRunner(project, events, sessionId, config, prices)
   const enrich = createContextEnricher({ events, sessionId, memory, skills, store })
   return new WardenRuntime(store, events, { run: (context, options) => enrich(context).then((enriched) => runner.run(enriched, options)) }, sessionId, config, tasks)
 }

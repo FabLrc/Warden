@@ -15,7 +15,9 @@ describe("doctor", () => {
     await expect(doctor(project, { home, nodeVersion: "v22.19.0" })).resolves.toEqual({ ok: true, checks: [
       { name: "node", status: "ok", message: "Node v22.19.0 supported" },
       { name: "config", status: "ok", message: `configuration valid: ${join(home, ".warden/config.yaml")}, ${join(project, ".warden/config.yaml")}` },
-      { name: "sessions", status: "ok", message: `session path available: ${join(project, ".warden/sessions")}` }
+      { name: "sessions", status: "ok", message: `session path available: ${join(project, ".warden/sessions")}` },
+      { name: "prices", status: "warning", message: "no model price cache; estimated costs unavailable until the next online run" },
+      { name: "quota", status: "ok", message: "no openrouter models configured" }
     ] })
   })
 
@@ -26,6 +28,6 @@ describe("doctor", () => {
 
     const report = await doctor(project, { home: join(project, "home"), nodeVersion: "v20.0.0" })
     expect(report.ok).toBe(false)
-    expect(report.checks.map(({ name, status }) => [name, status])).toEqual([['node', 'error'], ['config', 'error'], ['sessions', 'warning']])
+    expect(report.checks.map(({ name, status }) => [name, status])).toEqual([['node', 'error'], ['config', 'error'], ['sessions', 'warning'], ['prices', 'warning']])
   })
 })
