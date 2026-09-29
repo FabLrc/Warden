@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { homedir } from "node:os"
+import { join } from "node:path"
 import { loadConfig, type WardenConfig } from "../config/config.js"
 import { EventBus } from "../core/events.js"
 import type { Task } from "../core/task.js"
@@ -9,6 +10,7 @@ import { SessionStore, type SessionDescriptor } from "../persistence/session-sto
 import { createPiRunner } from "../runtime/pi-runner.js"
 import { createContextEnricher } from "../runtime/task-context.js"
 import { WardenRuntime } from "../runtime/warden-runtime.js"
+import { SkillRegistry } from "../skills/skill-registry.js"
 
 interface RuntimeLike {
   start(objective: string): Promise<{ state: string; result?: string; error?: string }>
@@ -49,8 +51,10 @@ async function buildRuntime(project: string, home: string, sessionId: string, st
   const events = new EventBus()
   const config = await loadConfig(project, home)
   const memory = await MemoryStore.create(project)
+  const skills = new SkillRegistry()
+  await skills.loadFrom(join(project, ".warden", "skills"))
   const runner = createPiRunner(project, events, sessionId, config)
-  const enrich = createContextEnricher({ events, sessionId, memory, store })
+  const enrich = createContextEnricher({ events, sessionId, memory, skills, store })
   return new WardenRuntime(store, events, { run: (context, options) => enrich(context).then((enriched) => runner.run(enriched, options)) }, sessionId, config, tasks)
 }
 

@@ -100,4 +100,23 @@ describe("run", () => {
       expect.objectContaining({ type: "memory.recalled", payload: { count: 1, ids: ["m1"] } })
     ]))
   })
+
+  it("loads detected project skills into the agent prompt and audits the load", async () => {
+    const root = await mkdtemp(join(tmpdir(), "warden-cli-"))
+    const home = join(root, "home")
+    const project = join(root, "project")
+    await mkdir(join(project, ".warden/skills/nestjs"), { recursive: true })
+    await writeFile(join(project, ".warden/skills/nestjs/manifest.yaml"), "name: nestjs\ndescription: Patterns and practices for NestJS applications\nestimatedContextTokens: 3400\n")
+    await writeFile(join(project, ".warden/skills/nestjs/SKILL.md"), "Use dependency injection.")
+    pi.prompts.length = 0
+
+    await expect(cli.run(["run", "add", "nestjs", "authentication"], undefined, { project, home })).resolves.toBe("completed: done")
+    expect(pi.prompts[0]).toContain("nestjs (+3400 tokens)")
+    expect(pi.prompts[0]).toContain("Use dependency injection.")
+
+    const [session] = await SessionStore.list(project)
+    await expect(SessionStore.open(project, session.state.sessionId).readEvents()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "skill.loaded", payload: { id: "nestjs", estimatedContextTokens: 3400 } })
+    ]))
+  })
 })

@@ -13,6 +13,7 @@ import { EventBus } from "../../src/core/events.js"
 import { MemoryStore } from "../../src/memory/memory-store.js"
 import { SessionStore } from "../../src/persistence/session-store.js"
 import { createContextEnricher } from "../../src/runtime/task-context.js"
+import { SkillRegistry } from "../../src/skills/skill-registry.js"
 
 describe("createContextEnricher", () => {
   it("injects recalled memory as artifacts and audits the recall", async () => {
@@ -41,5 +42,20 @@ describe("createContextEnricher", () => {
     const context = { objective: "fix the bug", constraints: [], artifacts: [] }
 
     await expect(enrich(context)).resolves.toEqual(context)
+  })
+
+  it("loads detected skills into the context and audits each load", async () => {
+    const root = await mkdtemp(join(tmpdir(), "warden-"))
+    const skills = new SkillRegistry()
+    skills.register({ id: "nestjs", name: "nestjs", description: "NestJS patterns", estimatedContextTokens: 3400 }, async () => "Use dependency injection.")
+    const store = await SessionStore.create(root, "s1")
+    const enrich = createContextEnricher({ events: new EventBus(), sessionId: "s1", skills, store })
+
+    const context = await enrich({ objective: "add nestjs authentication", constraints: [], artifacts: [], role: "builder" })
+
+    expect(context.skills).toEqual(["### nestjs (+3400 tokens)\nUse dependency injection."])
+    await expect(store.readEvents()).resolves.toEqual([
+      expect.objectContaining({ type: "skill.loaded", payload: { id: "nestjs", estimatedContextTokens: 3400 } })
+    ])
   })
 })

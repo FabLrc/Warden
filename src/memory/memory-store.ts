@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import { join } from "node:path"
+import { objectiveTokens } from "../core/text.js"
 
 export type MemoryPriority = "critical" | "lazy"
 export const defaultCriticalMemoryLimit = 20
@@ -71,13 +72,12 @@ function isMemoryRecord(value: unknown): value is MemoryRecord {
 }
 
 const deadStates = new Set(["superseded", "deprecated", "archived"])
-const stopwords = new Set(["the", "and", "for", "with", "this", "that", "from", "into", "not", "are", "was", "has", "have", "can", "will", "your", "our", "their", "all", "any"])
 
 export function recallMemory(records: readonly MemoryRecord[], objective: string, options: { criticalLimit?: number; lazyLimit?: number } = {}): MemoryRecord[] {
   const active = records.filter((record) => !deadStates.has(record.state))
   const critical = active.filter((record) => record.priority === "critical").slice(0, options.criticalLimit ?? defaultCriticalMemoryLimit)
   // ponytail: keyword recall, not embeddings; upgrade if relevance measurably poor
-  const tokens = objective.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3 && !stopwords.has(token))
+  const tokens = objectiveTokens(objective)
   const lazy = active.filter((record) => record.priority === "lazy" && tokens.some((token) => record.content.toLowerCase().includes(token))).slice(0, options.lazyLimit ?? 5)
   return [...critical, ...lazy]
 }
