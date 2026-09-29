@@ -23,6 +23,7 @@ export type EventType =
   | "model.selected"
   | "usage.updated"
   | "checkpoint.created"
+  | "memory.recalled"
 
 export interface WardenEvent<T = unknown> {
   id: string

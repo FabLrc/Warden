@@ -3,11 +3,21 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 
+const pi = vi.hoisted(() => ({ prompts: [] as string[] }))
+
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  DefaultResourceLoader: class {},
+  DefaultResourceLoader: class { async reload() {} },
   ModelRuntime: { create: vi.fn() },
   SessionManager: { inMemory: vi.fn() },
-  createAgentSession: vi.fn()
+  createAgentSession: vi.fn(async () => ({
+    session: {
+      prompt: async (text: string) => { pi.prompts.push(text) },
+      getLastAssistantText: () => "done",
+      subscribe: () => () => undefined,
+      dispose: () => undefined,
+      abort: async () => undefined
+    }
+  }))
 }))
 
 import * as cli from "../../src/cli/main.js"
@@ -70,5 +80,24 @@ describe("run", () => {
     const store = await SessionStore.create(project, "s1")
     await store.saveState({ sessionId: "s1", tasks: [{ id: "t1", objective: "resume", agent: "builder", state: "running" }], updatedAt: 1 })
     await expect(cli.run(["resume", "s1"], { start: async () => ({ state: "completed" }), resume: async () => ({ state: "completed", result: "continued" }) }, { project })).resolves.toBe("completed: continued")
+  })
+
+  it("recalls project memory into the agent prompt and audits the recall", async () => {
+    const root = await mkdtemp(join(tmpdir(), "warden-cli-"))
+    const home = join(root, "home")
+    const project = join(root, "project")
+    await mkdir(join(project, ".warden"), { recursive: true })
+    await writeFile(join(project, ".warden/memory.json"), JSON.stringify([
+      { id: "m1", content: "Never delete production data", priority: "critical", provenance: { source: "operator", capturedAt: 1 }, confidence: 1, state: "active", locked: true }
+    ]))
+    pi.prompts.length = 0
+
+    await expect(cli.run(["run", "fix", "the", "bug"], undefined, { project, home })).resolves.toBe("completed: done")
+    expect(pi.prompts[0]).toContain("Never delete production data")
+
+    const [session] = await SessionStore.list(project)
+    await expect(SessionStore.open(project, session.state.sessionId).readEvents()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "memory.recalled", payload: { count: 1, ids: ["m1"] } })
+    ]))
   })
 })

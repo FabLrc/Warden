@@ -2,9 +2,12 @@ import { randomUUID } from "node:crypto"
 import { homedir } from "node:os"
 import { loadConfig, type WardenConfig } from "../config/config.js"
 import { EventBus } from "../core/events.js"
+import type { Task } from "../core/task.js"
 import { doctor } from "../diagnostics/doctor.js"
+import { MemoryStore } from "../memory/memory-store.js"
 import { SessionStore, type SessionDescriptor } from "../persistence/session-store.js"
 import { createPiRunner } from "../runtime/pi-runner.js"
+import { createContextEnricher } from "../runtime/task-context.js"
 import { WardenRuntime } from "../runtime/warden-runtime.js"
 
 interface RuntimeLike {
@@ -27,11 +30,7 @@ export async function run(argv: string[], runtime?: RuntimeLike, options: RunOpt
     const store = SessionStore.open(project, sessionId)
     const state = await store.loadState()
     if (state.sessionId !== sessionId) throw new Error(`invalid Warden state: session ID does not match ${sessionId}`)
-    if (!runtime) {
-      const events = new EventBus()
-      const config = await loadConfig(project, home)
-      runtime = new WardenRuntime(store, events, createPiRunner(project, events, sessionId, config), sessionId, config, state.tasks)
-    }
+    if (!runtime) runtime = await buildRuntime(project, home, sessionId, store, state.tasks)
     if (!runtime.resume) throw new Error("runtime does not support resume")
     return formatTask(await runtime.resume())
   }
@@ -39,13 +38,20 @@ export async function run(argv: string[], runtime?: RuntimeLike, options: RunOpt
   const request = argv.slice(1).join(" ")
   if (!runtime) {
     const sessionId = randomUUID()
-    const events = new EventBus()
     const store = await SessionStore.create(project, sessionId)
-    const config = await loadConfig(project, home)
-    runtime = new WardenRuntime(store, events, createPiRunner(project, events, sessionId, config), sessionId, config)
+    runtime = await buildRuntime(project, home, sessionId, store)
   }
   const task = await runtime.start(request)
   return formatTask(task)
+}
+
+async function buildRuntime(project: string, home: string, sessionId: string, store: SessionStore, tasks: Task[] = []): Promise<WardenRuntime> {
+  const events = new EventBus()
+  const config = await loadConfig(project, home)
+  const memory = await MemoryStore.create(project)
+  const runner = createPiRunner(project, events, sessionId, config)
+  const enrich = createContextEnricher({ events, sessionId, memory, store })
+  return new WardenRuntime(store, events, { run: (context, options) => enrich(context).then((enriched) => runner.run(enriched, options)) }, sessionId, config, tasks)
 }
 
 function usage(): string { return "Usage: warden run <request> | resume <session-id> | doctor | config | sessions" }

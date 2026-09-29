@@ -69,3 +69,15 @@ function isMemoryRecord(value: unknown): value is MemoryRecord {
   const record = value as MemoryRecord
   return typeof record.id === "string" && typeof record.content === "string" && (record.priority === "critical" || record.priority === "lazy") && typeof record.provenance === "object" && record.provenance !== null && typeof record.provenance.source === "string" && typeof record.provenance.capturedAt === "number" && typeof record.confidence === "number" && Number.isFinite(record.confidence) && record.confidence >= 0 && record.confidence <= 1 && typeof record.state === "string" && typeof record.locked === "boolean"
 }
+
+const deadStates = new Set(["superseded", "deprecated", "archived"])
+const stopwords = new Set(["the", "and", "for", "with", "this", "that", "from", "into", "not", "are", "was", "has", "have", "can", "will", "your", "our", "their", "all", "any"])
+
+export function recallMemory(records: readonly MemoryRecord[], objective: string, options: { criticalLimit?: number; lazyLimit?: number } = {}): MemoryRecord[] {
+  const active = records.filter((record) => !deadStates.has(record.state))
+  const critical = active.filter((record) => record.priority === "critical").slice(0, options.criticalLimit ?? defaultCriticalMemoryLimit)
+  // ponytail: keyword recall, not embeddings; upgrade if relevance measurably poor
+  const tokens = objective.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3 && !stopwords.has(token))
+  const lazy = active.filter((record) => record.priority === "lazy" && tokens.some((token) => record.content.toLowerCase().includes(token))).slice(0, options.lazyLimit ?? 5)
+  return [...critical, ...lazy]
+}
