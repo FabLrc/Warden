@@ -13,6 +13,8 @@ export interface ToolOutput {
   savedBytes: number
 }
 
+export const defaultToolOutputBytes = 65536
+
 export class ToolProxy {
   constructor(private readonly inspector?: ContextInspector) {}
 
@@ -28,6 +30,11 @@ export class ToolProxy {
 
 function truncate(output: string, maxBytes: number): string {
   if (!Number.isInteger(maxBytes) || maxBytes < 0) throw new Error("maxBytes must be a non-negative integer")
-  if (Buffer.byteLength(output) <= maxBytes) return output
-  return new TextDecoder().decode(Buffer.from(output).subarray(0, maxBytes))
+  const buffer = Buffer.from(output)
+  if (buffer.byteLength <= maxBytes) return output
+  const marker = "\n[... output truncated by Warden ...]\n"
+  if (maxBytes <= marker.length) return new TextDecoder().decode(buffer.subarray(0, maxBytes))
+  const budget = maxBytes - marker.length
+  const head = Math.ceil(budget / 2)
+  return new TextDecoder().decode(buffer.subarray(0, head)) + marker + new TextDecoder().decode(buffer.subarray(buffer.byteLength - (budget - head)))
 }

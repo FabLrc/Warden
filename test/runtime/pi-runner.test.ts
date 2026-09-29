@@ -6,8 +6,9 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   createAgentSession: vi.fn()
 }))
 
-import { installToolPolicy, memoryArtifacts, PiRunner, renderContext, selectPiTools, toolDecision, type PiSessionFactory } from "../../src/runtime/pi-runner.js"
+import { installToolPolicy, installToolProxy, memoryArtifacts, PiRunner, renderContext, selectPiTools, toolDecision, type PiSessionFactory } from "../../src/runtime/pi-runner.js"
 import { EventBus } from "../../src/core/events.js"
+import { ToolProxy } from "../../src/tools/tool-proxy.js"
 
 describe("PiRunner", () => {
   it("creates and disposes a fresh session for each task", async () => {
@@ -106,5 +107,17 @@ describe("PiRunner", () => {
     let handler: ((event: { toolName: string }) => unknown) | undefined
     installToolPolicy({ on: (_event: string, value: (event: { toolName: string }) => unknown) => { handler = value } } as never, "builder", { autonomy: "auto", policy: { allowed: ["external_side_effect"] } })
     expect(handler?.({ toolName: "fetch" })).toMatchObject({ block: true })
+  })
+
+  it("truncates oversized tool results before reinjection and leaves small results untouched", () => {
+    let handler: ((event: { content: Array<{ type: string; text?: string; source?: string }> }) => unknown) | undefined
+    installToolProxy({ on: (_event: string, value: NonNullable<typeof handler>) => { handler = value } } as never, new ToolProxy(), { maxBytes: 50 })
+
+    const result = handler?.({ content: [{ type: "text", text: `head\n${"x".repeat(200)}\ntail` }, { type: "image", source: "binary" }] }) as { content: Array<{ type: string; text?: string; source?: string }> }
+    expect(result.content[0].text).toContain("head")
+    expect(result.content[0].text).toContain("tail")
+    expect(result.content[0].text?.length ?? 0).toBeLessThan(210)
+    expect(result.content[1]).toEqual({ type: "image", source: "binary" })
+    expect(handler?.({ content: [{ type: "text", text: "small" }] })).toBeUndefined()
   })
 })

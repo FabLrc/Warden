@@ -5,6 +5,7 @@ import { EventBus, event, type Usage } from "../core/events.js"
 import { ContextInspector, type ContextSnapshot } from "../observability/context-inspector.js"
 import { classifyTool, decidePolicy, type AutonomyMode, type PermissionPolicy } from "../policy/policy.js"
 import type { MemoryRecord } from "../memory/memory-store.js"
+import { ToolProxy, defaultToolOutputBytes, type ToolProxyOptions } from "../tools/tool-proxy.js"
 
 export interface TaskArtifact { label: string; content: string }
 export interface TaskContext {
@@ -29,11 +30,10 @@ export interface PiSession {
   abort(): Promise<void>
 }
 export type PiSessionFactory = (context: TaskContext) => Promise<PiSession>
-export interface PiPolicyOptions { autonomy?: AutonomyMode; policy?: PermissionPolicy }
+export interface PiPolicyOptions { autonomy?: AutonomyMode; policy?: PermissionPolicy; toolProxy?: ToolProxyOptions }
 
 export class PiRunner {
-  private readonly inspector = new ContextInspector()
-  constructor(private readonly factory: PiSessionFactory, private readonly events: EventBus, private readonly sessionId: string) {}
+  constructor(private readonly factory: PiSessionFactory, private readonly events: EventBus, private readonly sessionId: string, private readonly inspector = new ContextInspector()) {}
 
   async run(context: TaskContext, options: { signal?: AbortSignal } = {}): Promise<PiRunResult> {
     const session = await this.factory(context)
@@ -151,10 +151,29 @@ export function installToolPolicy(pi: ExtensionAPI, role: AgentRole, options: Pi
   })
 }
 
+export function installToolProxy(pi: ExtensionAPI, proxy: ToolProxy, options: ToolProxyOptions = {}): void {
+  pi.on("tool_result", (event) => {
+    let changed = false
+    const content = event.content.map((part) => {
+      if (part.type !== "text") return part
+      const output = proxy.process(part.text, options)
+      if (output.injected === part.text) return part
+      changed = true
+      return { ...part, text: output.injected }
+    })
+    return changed ? { content } : undefined
+  })
+}
+
 export function createPiRunner(cwd: string, events: EventBus, sessionId: string, options: PiPolicyOptions = {}): PiRunner {
+  const inspector = new ContextInspector()
+  const proxy = new ToolProxy(inspector)
   return new PiRunner(async (context) => {
     const role = context.role ?? "builder"
-    const resourceLoader = new DefaultResourceLoader({ cwd, agentDir: `${cwd}/.warden/pi`, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, extensionFactories: [(pi) => installToolPolicy(pi, role, options)] })
+    const resourceLoader = new DefaultResourceLoader({ cwd, agentDir: `${cwd}/.warden/pi`, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, extensionFactories: [(pi) => {
+      installToolPolicy(pi, role, options)
+      installToolProxy(pi, proxy, { maxBytes: defaultToolOutputBytes, ...options.toolProxy })
+    }] })
     await resourceLoader.reload()
     const configuredModel = context.model
     const modelRuntime = configuredModel ? await ModelRuntime.create() : undefined
@@ -162,5 +181,5 @@ export function createPiRunner(cwd: string, events: EventBus, sessionId: string,
     if (configuredModel && !model) throw new Error(`configured Pi model not found: ${configuredModel.provider}/${configuredModel.model}`)
     const { session } = await createAgentSession({ cwd, sessionManager: SessionManager.inMemory(), resourceLoader, tools: selectPiTools(role, options), modelRuntime, model: model && { ...model, contextWindow: configuredModel?.contextLimit ?? model.contextWindow }, thinkingLevel: configuredModel?.reasoning })
     return session
-  }, events, sessionId)
+  }, events, sessionId, inspector)
 }
