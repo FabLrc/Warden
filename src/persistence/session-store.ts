@@ -28,10 +28,14 @@ export class SessionStore {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
       throw error
     }
-    return Promise.all(entries.filter((entry) => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)).map(async (entry) => {
-      const store = SessionStore.open(project, entry.name)
-      return store.read()
+    const descriptors = await Promise.all(entries.filter((entry) => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)).map(async (entry) => {
+      try {
+        return await SessionStore.open(project, entry.name).read()
+      } catch {
+        return undefined
+      }
     }))
+    return descriptors.filter((descriptor): descriptor is SessionDescriptor => descriptor !== undefined)
   }
 
   async saveState(state: SessionState): Promise<void> {

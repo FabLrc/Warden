@@ -10,7 +10,7 @@ export interface DashboardDetails {
 
 export function renderDashboard(snapshot: RuntimeSnapshot, details: DashboardDetails = {}): string {
   const { metrics } = details
-  const tasks = snapshot.tasks.map((task) => `Builder  ${task.state}  ${task.objective}`).join("\n") || "No tasks"
+  const tasks = snapshot.tasks.map((task) => `${task.agent.charAt(0).toUpperCase()}${task.agent.slice(1)}  ${task.state}  ${task.objective}`).join("\n") || "No tasks"
   const usage = metrics ? `input ${metrics.usage.input}  output ${metrics.usage.output}  cached ${metrics.usage.cachedInput}  reasoning ${metrics.usage.reasoning}` : "unknown"
   const cost = metrics ? `provider ${metrics.providerCost}  estimated ${metrics.estimatedCost}` : "unknown"
   const context = details.context ? `${details.context.tokens}${details.context.limit === undefined ? "" : ` / ${details.context.limit}`} tokens` : "unknown"

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -47,5 +47,16 @@ describe("SessionStore", () => {
     await writeFile(path, '{"sessionId":1,"tasks":[]}')
     await expect(store.loadState()).rejects.toThrow("invalid Warden state")
     await expect(readFile(path, "utf8")).resolves.toContain("sessionId")
+  })
+
+  it("skips session directories without readable state when listing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "warden-"))
+    const valid = await SessionStore.create(root, "valid")
+    await valid.saveState({ sessionId: "valid", tasks: [], updatedAt: 1 })
+    await SessionStore.create(root, "abandoned")
+    await mkdir(join(root, ".warden/sessions/corrupt"), { recursive: true })
+    await writeFile(join(root, ".warden/sessions/corrupt/state.json"), "{")
+
+    await expect(SessionStore.list(root)).resolves.toMatchObject([{ state: { sessionId: "valid" } }])
   })
 })

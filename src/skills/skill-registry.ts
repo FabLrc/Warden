@@ -24,7 +24,10 @@ export class SkillRegistry {
     if (!skill) throw new Error(`unknown skill: ${id}`)
     let loaded = this.loaded.get(id)
     if (!loaded) {
-      loaded = skill.load()
+      loaded = skill.load().catch((error) => {
+        this.loaded.delete(id)
+        throw error
+      })
       this.loaded.set(id, loaded)
     }
     return loaded

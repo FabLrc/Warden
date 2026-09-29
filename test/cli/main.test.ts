@@ -1,7 +1,15 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
+
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+  DefaultResourceLoader: class {},
+  ModelRuntime: { create: vi.fn() },
+  SessionManager: { inMemory: vi.fn() },
+  createAgentSession: vi.fn()
+}))
+
 import * as cli from "../../src/cli/main.js"
 import { SessionStore } from "../../src/persistence/session-store.js"
 

@@ -29,7 +29,8 @@ export async function run(argv: string[], runtime?: RuntimeLike, options: RunOpt
     if (state.sessionId !== sessionId) throw new Error(`invalid Warden state: session ID does not match ${sessionId}`)
     if (!runtime) {
       const events = new EventBus()
-      runtime = new WardenRuntime(store, events, createPiRunner(project, events, sessionId), sessionId, await loadConfig(project, home), state.tasks)
+      const config = await loadConfig(project, home)
+      runtime = new WardenRuntime(store, events, createPiRunner(project, events, sessionId, config), sessionId, config, state.tasks)
     }
     if (!runtime.resume) throw new Error("runtime does not support resume")
     return formatTask(await runtime.resume())
@@ -74,5 +75,11 @@ function formatSessions(sessions: SessionDescriptor[]): string {
 }
 
 if (process.argv[1]?.endsWith("main.ts") || process.argv[1]?.endsWith("main.js")) {
-  void run(process.argv.slice(2)).then((output) => process.stdout.write(`${output}\n`))
+  void run(process.argv.slice(2)).then(
+    (output) => process.stdout.write(`${output}\n`),
+    (error) => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      process.exitCode = 1
+    }
+  )
 }

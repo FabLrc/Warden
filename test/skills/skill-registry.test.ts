@@ -21,4 +21,17 @@ describe("SkillRegistry", () => {
     expect(() => registry.register({ id: "summarize", name: "Again", description: "Duplicate" }, async () => ({}))).toThrow("already registered")
     await expect(registry.load("missing")).rejects.toThrow("unknown skill")
   })
+
+  it("retries a skill load after a failure instead of caching it", async () => {
+    let attempts = 0
+    const registry = new SkillRegistry()
+    registry.register({ id: "flaky", name: "Flaky", description: "Fails once" }, async () => {
+      if (++attempts === 1) throw new Error("boom")
+      return { ok: true }
+    })
+
+    await expect(registry.load("flaky")).rejects.toThrow("boom")
+    await expect(registry.load("flaky")).resolves.toEqual({ ok: true })
+    expect(attempts).toBe(2)
+  })
 })
