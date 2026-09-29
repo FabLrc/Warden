@@ -1,23 +1,27 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { describe, expect, it, vi } from "vitest"
 
-const pi = vi.hoisted(() => ({ prompts: [] as string[] }))
+const pi = vi.hoisted(() => ({ prompts: [] as string[], sessions: [] as Array<Record<string, unknown>> }))
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   DefaultResourceLoader: class { async reload() {} },
   ModelRuntime: { create: vi.fn() },
   SessionManager: { inMemory: vi.fn() },
-  createAgentSession: vi.fn(async () => ({
-    session: {
-      prompt: async (text: string) => { pi.prompts.push(text) },
-      getLastAssistantText: () => "done",
-      subscribe: () => () => undefined,
-      dispose: () => undefined,
-      abort: async () => undefined
+  createAgentSession: vi.fn(async (options: Record<string, unknown>) => {
+    pi.sessions.push(options)
+    return {
+      session: {
+        prompt: async (text: string) => { pi.prompts.push(text) },
+        getLastAssistantText: () => "done",
+        subscribe: () => () => undefined,
+        dispose: () => undefined,
+        abort: async () => undefined
+      }
     }
-  }))
+  })
 }))
 
 import * as cli from "../../src/cli/main.js"
@@ -118,5 +122,23 @@ describe("run", () => {
     await expect(SessionStore.open(project, session.state.sessionId).readEvents()).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "skill.loaded", payload: { id: "nestjs", estimatedContextTokens: 3400 } })
     ]))
+  })
+
+  it("exposes configured MCP tools to the agent session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "warden-cli-"))
+    const home = join(root, "home")
+    const project = join(root, "project")
+    await mkdir(join(project, ".warden"), { recursive: true })
+    await writeFile(join(project, ".warden/config.yaml"), JSON.stringify({
+      version: 1,
+      mcp: { demo: { command: process.execPath, args: [fileURLToPath(new URL("../mcp/fixtures/fake-mcp-server.mjs", import.meta.url))], agents: { builder: {} } } }
+    }))
+    pi.sessions.length = 0
+
+    await expect(cli.run(["run", "fix", "the", "bug"], undefined, { project, home })).resolves.toBe("completed: done")
+
+    const options = pi.sessions[0]
+    expect(options.tools).toContain("mcp__demo__echo")
+    expect((options.customTools as Array<{ name: string }>).map(({ name }) => name)).toEqual(["mcp__demo__echo", "mcp__demo__danger"])
   })
 })

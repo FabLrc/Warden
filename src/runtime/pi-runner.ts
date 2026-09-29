@@ -5,6 +5,8 @@ import { EventBus, event, type Usage } from "../core/events.js"
 import { ContextInspector, type ContextSnapshot } from "../observability/context-inspector.js"
 import { classifyTool, decidePolicy, type AutonomyMode, type PermissionPolicy } from "../policy/policy.js"
 import type { MemoryRecord } from "../memory/memory-store.js"
+import { isMcpToolName, openMcpTools } from "../mcp/mcp-bridge.js"
+import { McpRegistry, type McpServerDefinition } from "../mcp/mcp-registry.js"
 import { ToolProxy, defaultToolOutputBytes, type ToolProxyOptions } from "../tools/tool-proxy.js"
 
 export interface TaskArtifact { label: string; content: string }
@@ -30,7 +32,7 @@ export interface PiSession {
   abort(): Promise<void>
 }
 export type PiSessionFactory = (context: TaskContext) => Promise<PiSession>
-export interface PiPolicyOptions { autonomy?: AutonomyMode; policy?: PermissionPolicy; toolProxy?: ToolProxyOptions }
+export interface PiPolicyOptions { autonomy?: AutonomyMode; policy?: PermissionPolicy; toolProxy?: ToolProxyOptions; mcp?: Record<string, McpServerDefinition> }
 
 export class PiRunner {
   constructor(private readonly factory: PiSessionFactory, private readonly events: EventBus, private readonly sessionId: string, private readonly inspector = new ContextInspector()) {}
@@ -135,6 +137,8 @@ function recordContext(inspector: ContextInspector, context: TaskContext): void 
 }
 
 export function toolDecision(tool: string, role: AgentRole, options: PiPolicyOptions = {}): "allow" | "confirm" | "deny" {
+  // ponytail: MCP tools are governed by the per-agent config allowlist only, not the risk-class ceiling; revisit with interactive confirmations
+  if (isMcpToolName(tool)) return "allow"
   const operation = classifyTool(tool)
   if (operation !== "read" && !canWrite(role)) return "deny"
   return decidePolicy(options.autonomy ?? "guided", operation, options.policy)
@@ -175,11 +179,33 @@ export function createPiRunner(cwd: string, events: EventBus, sessionId: string,
       installToolProxy(pi, proxy, { maxBytes: defaultToolOutputBytes, ...options.toolProxy })
     }] })
     await resourceLoader.reload()
-    const configuredModel = context.model
-    const modelRuntime = configuredModel ? await ModelRuntime.create() : undefined
-    const model = configuredModel && modelRuntime?.getModel(configuredModel.provider, configuredModel.model)
-    if (configuredModel && !model) throw new Error(`configured Pi model not found: ${configuredModel.provider}/${configuredModel.model}`)
-    const { session } = await createAgentSession({ cwd, sessionManager: SessionManager.inMemory(), resourceLoader, tools: selectPiTools(role, options), modelRuntime, model: model && { ...model, contextWindow: configuredModel?.contextLimit ?? model.contextWindow }, thinkingLevel: configuredModel?.reasoning })
-    return session
+    // ponytail: MCP clients open per task; hoist to session level if startup cost matters
+    const { tools: mcpTools, close } = await openMcpTools(new McpRegistry(options.mcp ?? {}).forAgent(role))
+    try {
+      const configuredModel = context.model
+      const modelRuntime = configuredModel ? await ModelRuntime.create() : undefined
+      const model = configuredModel && modelRuntime?.getModel(configuredModel.provider, configuredModel.model)
+      if (configuredModel && !model) throw new Error(`configured Pi model not found: ${configuredModel.provider}/${configuredModel.model}`)
+      const { session } = await createAgentSession({
+        cwd,
+        sessionManager: SessionManager.inMemory(),
+        resourceLoader,
+        tools: [...selectPiTools(role, options), ...mcpTools.map((tool) => tool.name)],
+        customTools: mcpTools,
+        modelRuntime,
+        model: model && { ...model, contextWindow: configuredModel?.contextLimit ?? model.contextWindow },
+        thinkingLevel: configuredModel?.reasoning
+      })
+      return {
+        prompt: (text) => session.prompt(text),
+        getLastAssistantText: () => session.getLastAssistantText(),
+        subscribe: (listener) => session.subscribe(listener),
+        abort: () => session.abort(),
+        dispose: () => { session.dispose(); close() }
+      }
+    } catch (error) {
+      close()
+      throw error
+    }
   }, events, sessionId, inspector)
 }

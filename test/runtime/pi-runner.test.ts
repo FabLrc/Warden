@@ -101,6 +101,8 @@ describe("PiRunner", () => {
     expect(toolDecision("write", "inspector", { autonomy: "full", policy: { allowed: ["safe_write"] } })).toBe("deny")
     expect(toolDecision("write", "builder", { autonomy: "ask", policy: { allowed: ["safe_write"] } })).toBe("deny")
     expect(toolDecision("fetch", "builder", { autonomy: "auto", policy: { allowed: ["external_side_effect"] } })).toBe("deny")
+    expect(toolDecision("mcp__github__search", "navigator", { autonomy: "ask" })).toBe("allow")
+    expect(toolDecision("mcp__github__issue_write", "navigator", { autonomy: "ask" })).toBe("allow")
   })
 
   it("blocks forbidden tool calls after selection", () => {
