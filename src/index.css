@@ -1,0 +1,177 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  /* Warden extras */
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-soul: var(--soul);
+  --color-bone: var(--bone);
+  --color-surface: var(--surface);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/*
+ * Warden palette — inspired by Minecraft's Warden: abyssal teal-black body,
+ * sculk cyan souls glowing in the chest, pale bone ribs.
+ * Single dark theme. Body text stays neutral (not cyan) for readability;
+ * cyan is reserved for focus, primary actions and live state.
+ * Contrast (WCAG): foreground/background ≈ 15:1, muted-foreground/card ≈ 6.8:1,
+ * primary-foreground on primary ≈ 10:1.
+ */
+:root,
+.dark {
+  --background: #070f12;
+  --surface: #0a161a;
+  --foreground: #d5e6e7;
+  --card: #0d1b20;
+  --card-foreground: #d5e6e7;
+  --popover: #0f2127;
+  --popover-foreground: #d5e6e7;
+  --primary: #29d3dc;
+  --primary-foreground: #03191c;
+  --secondary: #132a31;
+  --secondary-foreground: #d5e6e7;
+  --muted: #11252b;
+  --muted-foreground: #8aa7ac;
+  --accent: #163239;
+  --accent-foreground: #e6f4f4;
+  --destructive: #f0645a;
+  --border: #1d3a42;
+  --input: #24464f;
+  --ring: #29d3dc;
+  --success: #4cc38a;
+  --warning: #e2b14a;
+  --info: #7aa7ff;
+  --soul: #6ff7f2;
+  --bone: #cfd3b8;
+  --chart-1: #29d3dc;
+  --chart-2: #4cc38a;
+  --chart-3: #e2b14a;
+  --chart-4: #a48cf5;
+  --chart-5: #f0645a;
+  --radius: 0.5rem;
+  --sidebar: #0a161a;
+  --sidebar-foreground: #c4d8da;
+  --sidebar-primary: #29d3dc;
+  --sidebar-primary-foreground: #03191c;
+  --sidebar-accent: #13292f;
+  --sidebar-accent-foreground: #e6f4f4;
+  --sidebar-border: #17323a;
+  --sidebar-ring: #29d3dc;
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    @apply h-full overflow-hidden;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  html {
+    @apply font-sans;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 35%, transparent);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer utilities {
+  /* Faint sculk glow around live / focused elements. */
+  .glow-soul {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--primary) 45%, transparent),
+      0 0 18px -6px color-mix(in srgb, var(--soul) 55%, transparent);
+  }
+  .text-glow {
+    text-shadow: 0 0 12px color-mix(in srgb, var(--soul) 45%, transparent);
+  }
+  /* Ambient sculk light at the top of the main area. */
+  .bg-sculk {
+    background:
+      radial-gradient(1200px 380px at 50% -160px, color-mix(in srgb, var(--primary) 9%, transparent), transparent 70%),
+      var(--background);
+  }
+  @keyframes soul-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+  .animate-soul {
+    animation: soul-pulse 1.6s ease-in-out infinite;
+  }
+}

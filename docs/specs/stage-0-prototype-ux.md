@@ -1,7 +1,7 @@
 # Étape 0 — Prototype UX : plan de développement
 
 **Référence produit :** `docs/cahier-des-charges.md` (§38, Étape 0)
-**Statut :** proposé
+**Statut :** lots 0 à 5 réalisés — lot 6 (revue utilisateur) à faire
 **Date :** 2026-10-07
 
 ---
